@@ -128,17 +128,20 @@ async def process_jsluice_output(jsluice_output: list[str], current_url: str, co
             data = json.loads(line)
             if 'url' in data:
                 url = normalize_url(data['url'], current_url)
-                parsed_url = urllib.parse.urlparse(url)
-                if parsed_url.scheme and parsed_url.netloc:
-                    new_url = urllib.parse.urlunparse((
-                        parsed_url.scheme,
-                        parsed_url.netloc,
-                        parsed_url.path,
-                        parsed_url.params,
-                        parsed_url.query,
-                        parsed_url.fragment
-                    ))
-                    (js_urls if is_js_file(new_url) else non_js_urls).add(new_url)
+                try:
+                    parsed_url = urllib.parse.urlparse(url)
+                    if parsed_url.scheme and parsed_url.netloc:
+                        new_url = urllib.parse.urlunparse((
+                            parsed_url.scheme,
+                            parsed_url.netloc,
+                            parsed_url.path,
+                            parsed_url.params,
+                            parsed_url.query,
+                            parsed_url.fragment
+                        ))
+                        (js_urls if is_js_file(new_url) else non_js_urls).add(new_url)
+                except ValueError as e:
+                    logger.error(f"Error parsing URL {url}: {str(e)}")
             elif 'kind' in data:
                 data['original_file'] = current_url
                 secrets.append(data)
