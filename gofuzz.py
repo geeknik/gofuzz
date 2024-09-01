@@ -1064,20 +1064,17 @@ async def main():
                 all_secrets.extend(secrets)
 
 
-    if args.mode in ['endpoints', 'both']:
-        logger.info("Printing endpoints")
-        for url in sorted(all_js_urls):
-            print(f"[JS] {url}")
-        for url in sorted(all_non_js_urls):
-            print(f"[Non-JS] {url}")
+    # Always print found endpoints and secrets
+    for url in sorted(all_js_urls):
+        print(f"[JS] {url}")
+    for url in sorted(all_non_js_urls):
+        print(f"[Non-JS] {url}")
 
-    if args.mode in ['secrets', 'both']:
-        logger.info("Processing and printing secrets")
-        sorted_secrets = sorted(all_secrets, key=lambda x: (-severity_to_int(x['severity']), json.dumps(x)))
-        unique_secrets = list(OrderedDict((json.dumps(secret), secret) for secret in sorted_secrets).values())
+    sorted_secrets = sorted(all_secrets, key=lambda x: (-severity_to_int(x['severity']), json.dumps(x)))
+    unique_secrets = list(OrderedDict((json.dumps(secret), secret) for secret in sorted_secrets).values())
 
-        for secret in unique_secrets:
-            print(json.dumps(secret))
+    for secret in unique_secrets:
+        print(json.dumps(secret))
 
 
 if __name__ == "__main__":
