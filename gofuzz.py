@@ -10,23 +10,29 @@ import os
 import re
 import base64
 import ipaddress
-import requests
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 import logging
 import ssl
 import socket
-import subprocess
 import jwt
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding
 import datetime
 import hashlib
+from functools import lru_cache
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Custom UserAgent
+USER_AGENT = "GoFuzz/1.0 (+https://github.com/your-repo/gofuzz)"
+
+# URL content cache
+url_content_cache = {}
+
+# Semaphore for limiting concurrent connections
+MAX_CONCURRENT_REQUESTS = 20
+semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
 def get_context(content: str, start: int, end: int, context_size: int = 50) -> str:
     """Get context around a specific part of the content."""
@@ -46,15 +52,29 @@ def is_js_file(url: str) -> bool:
     """Check if a URL points to a JavaScript file."""
     return url.lower().endswith('.js')
 
-async def run_jsluice(url: str, mode: str, session: aiohttp.ClientSession, verbose: bool) -> tuple[list[str], str]:
+@lru_cache(maxsize=1000)
+async def fetch_url_content(url: str, session: aiohttp.ClientSession) -> str:
     try:
-        async with session.get(url, timeout=30) as response:
-            if response.status != 200:
-                logger.warning(f"Failed to fetch {url}: HTTP {response.status}")
-                return [], ""
-            content = await response.text()
-            logger.info(f"Fetched: {url}")
+        async with semaphore:
+            async with session.get(url, timeout=30, headers={"User-Agent": USER_AGENT}) as response:
+                if response.status != 200:
+                    logger.warning(f"Failed to fetch {url}: HTTP {response.status}")
+                    return ""
+                content = await response.text()
+                logger.info(f"Fetched: {url}")
+                return content
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        logger.error(f"Network error for {url}: {str(e)}")
+    except Exception as e:
+        logger.exception(f"Unexpected error fetching {url}: {str(e)}")
+    return ""
 
+async def run_jsluice(url: str, mode: str, session: aiohttp.ClientSession, verbose: bool) -> tuple[list[str], str]:
+    content = await fetch_url_content(url, session)
+    if not content:
+        return [], ""
+
+    try:
         with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_file:
             temp_file.write(content)
             temp_file_path = temp_file.name
@@ -73,11 +93,9 @@ async def run_jsluice(url: str, mode: str, session: aiohttp.ClientSession, verbo
         if stderr:
             logger.error(f"Error processing {url}: {stderr.decode()}")
         return stdout.decode().splitlines(), content
-    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-        logger.error(f"Network error for {url}: {str(e)}")
     except Exception as e:
         logger.exception(f"Unexpected error in run_jsluice for {url}: {str(e)}")
-    return [], ""
+    return [], content
 
 async def process_jsluice_output(jsluice_output: list[str], current_url: str, content: str, verbose: bool) -> tuple[set[str], set[str], list[dict]]:
     js_urls = set()
