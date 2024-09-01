@@ -56,7 +56,7 @@ async def fetch_url_content(url: str, session: aiohttp.ClientSession) -> str:
         async with semaphore:
             async with session.get(url, timeout=30, headers={"User-Agent": USER_AGENT}) as response:
                 if response.status != 200:
-                    logger.warning(f"Failed to fetch {url}: HTTP {response.status}")
+                    logger.debug(f"Failed to fetch {url}: HTTP {response.status}")
                     return ""
                 content = await response.text()
                 logger.info(f"Fetched: {url}")
@@ -78,7 +78,7 @@ async def run_jsluice(url: str, mode: str, session: aiohttp.ClientSession, verbo
         if content:
             url_content_cache[url] = content
         else:
-            logger.warning(f"No content fetched for {url}")
+            logger.debug(f"No content fetched for {url}")
             return [], ""
     
     content = url_content_cache[url]
