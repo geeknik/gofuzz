@@ -120,17 +120,24 @@ def check_internal_ips(content, current_url):
         # Check if the IP is not part of a version number or other common patterns
         if not re.search(r'\d+\.\d+\.\d+\.\d+[-\w]', match.string[max(0, match.start()-1):match.end()+1]):
             try:
-                if ipaddress.ip_address(ip).is_private:
-                    poc = f"curl -I {current_url}"
-                    secrets.append({
-                        'kind': 'InternalIPAddress',
-                        'data': {'value': ip, 'matched_string': match.group()},
-                        'filename': current_url,
-                        'severity': 'medium',
-                        'context': None,
-                        'poc': poc,
-                        'description': f"Internal IP address {ip} found in {current_url}. This may reveal information about the internal network structure."
-                    })
+                ip_obj = ipaddress.ip_address(ip)
+                # Exclude 0.0.0.0 and 0.0.0.1
+                if ip_obj.is_private and ip not in ['0.0.0.0', '0.0.0.1']:
+                    # Additional check for potentially valid internal IP ranges
+                    if (ip_obj.is_private and
+                        not ip_obj.is_loopback and
+                        not ip_obj.is_link_local and
+                        not ip_obj.is_multicast):
+                        poc = f"curl -I {current_url}"
+                        secrets.append({
+                            'kind': 'InternalIPAddress',
+                            'data': {'value': ip, 'matched_string': match.group()},
+                            'filename': current_url,
+                            'severity': 'medium',
+                            'context': None,
+                            'poc': poc,
+                            'description': f"Potential internal IP address {ip} found in {current_url}. This may reveal information about the internal network structure."
+                        })
             except ValueError:
                 pass
     return secrets
