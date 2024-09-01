@@ -117,20 +117,22 @@ def check_internal_ips(content, current_url):
     ip_matches = re.finditer(ip_regex, content)
     for match in ip_matches:
         ip = match.group()
-        try:
-            if ipaddress.ip_address(ip).is_private:
-                poc = f"curl -I {current_url}"
-                secrets.append({
-                    'kind': 'InternalIPAddress',
-                    'data': {'value': ip, 'matched_string': match.group()},
-                    'filename': current_url,
-                    'severity': 'medium',
-                    'context': None,
-                    'poc': poc,
-                    'description': f"Internal IP address {ip} found in {current_url}. This may reveal information about the internal network structure."
-                })
-        except ValueError:
-            pass
+        # Check if the IP is not part of a version number or other common patterns
+        if not re.search(r'\d+\.\d+\.\d+\.\d+[-\w]', match.string[max(0, match.start()-1):match.end()+1]):
+            try:
+                if ipaddress.ip_address(ip).is_private:
+                    poc = f"curl -I {current_url}"
+                    secrets.append({
+                        'kind': 'InternalIPAddress',
+                        'data': {'value': ip, 'matched_string': match.group()},
+                        'filename': current_url,
+                        'severity': 'medium',
+                        'context': None,
+                        'poc': poc,
+                        'description': f"Internal IP address {ip} found in {current_url}. This may reveal information about the internal network structure."
+                    })
+            except ValueError:
+                pass
     return secrets
 
 def check_graphql_introspection(content, current_url):
