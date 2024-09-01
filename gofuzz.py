@@ -13,6 +13,11 @@ import ipaddress
 import requests
 from urllib.parse import urlparse
 
+def get_context(content, start, end, context_size=50):
+    context_start = max(0, start - context_size)
+    context_end = min(len(content), end + context_size)
+    return content[context_start:context_end]
+
 def normalize_url(url, base_url):
     if url.startswith('//'):
         return 'https:' + url
@@ -117,9 +122,7 @@ def check_internal_ips(content, current_url):
     ip_matches = re.finditer(ip_regex, content)
     for match in ip_matches:
         ip = match.group()
-        start = max(0, match.start() - 50)
-        end = min(len(content), match.end() + 50)
-        context = content[start:end]
+        context = get_context(content, match.start(), match.end())
         
         # Check if the IP is not part of a version number or other common patterns
         if not re.search(r'\d+\.\d+\.\d+\.\d+[-\w]', context):
@@ -157,6 +160,7 @@ def check_graphql_introspection(content, current_url):
         'types', 'inputFields', 'interfaces', 'enumValues', 'possibleTypes'
     ]
     if all(marker in content for marker in graphql_markers):
+        context = get_context(content, content.index('__schema'), content.index('__schema') + 10)
         introspection_query = '''{
   __schema {
     queryType {
@@ -266,7 +270,7 @@ curl -X POST {current_url} \\
             'data': {'value': 'GraphQL Introspection detected', 'matched_string': '__schema'},
             'filename': current_url,
             'severity': 'medium',
-            'context': None,
+            'context': context,
             'poc': poc,
             'description': f"GraphQL introspection seems to be enabled on {current_url}. This could expose the entire API structure."
         })
@@ -277,6 +281,7 @@ def check_jwt_none_algorithm(content, current_url):
     jwt_none_regex = r'alg\s*:\s*["\']?none["\']?'
     jwt_none_matches = re.finditer(jwt_none_regex, content, re.IGNORECASE)
     for match in jwt_none_matches:
+        context = get_context(content, match.start(), match.end())
         poc = f'''
 # Python script to generate a JWT token with 'none' algorithm
 import jwt
@@ -293,7 +298,7 @@ curl -H "Authorization: Bearer {{token}}" {current_url}
             'data': {'value': 'JWT None Algorithm detected', 'matched_string': match.group()},
             'filename': current_url,
             'severity': 'high',
-            'context': None,
+            'context': context,
             'poc': poc,
             'description': f"JWT 'none' algorithm usage detected in {current_url}. This is a severe security vulnerability allowing token forgery."
         })
@@ -304,6 +309,7 @@ def check_cors_misconfig(content, current_url):
     cors_regex = r'Access-Control-Allow-Origin\s*:\s*\*'
     cors_matches = re.finditer(cors_regex, content, re.IGNORECASE)
     for match in cors_matches:
+        context = get_context(content, match.start(), match.end())
         poc = f'''
 curl -H "Origin: https://attacker.com" -I {current_url}
 '''
@@ -312,7 +318,7 @@ curl -H "Origin: https://attacker.com" -I {current_url}
             'data': {'value': 'CORS Misconfiguration detected', 'matched_string': match.group()},
             'filename': current_url,
             'severity': 'medium',
-            'context': None,
+            'context': context,
             'poc': poc,
             'description': f"Overly permissive CORS policy detected in {current_url}. This may allow unintended cross-origin requests."
         })
