@@ -89,31 +89,38 @@ async def run_jsluice(url: str, mode: str, session: aiohttp.ClientSession, verbo
     
     content = url_content_cache[url]
 
-    try:
-        with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_file:
-            temp_file.write(content)
-            temp_file_path = temp_file.name
+    # Create a new coroutine for each call
+    async def run_jsluice_process():
 
-        cmd = f"jsluice {mode} -R '{url}' {temp_file_path}"
-        logger.debug(f"Running command: {cmd}")
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await proc.communicate()
+    # Create a new coroutine for each call
+    async def run_jsluice_process():
+        try:
+            with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_file:
+                temp_file.write(content)
+                temp_file_path = temp_file.name
 
-        os.unlink(temp_file_path)  # Remove the temporary file
+            cmd = f"jsluice {mode} -R '{url}' {temp_file_path}"
+            logger.debug(f"Running command: {cmd}")
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
 
-        if stderr:
-            logger.error(f"Error processing {url}: {stderr.decode()}")
-        
-        output = stdout.decode().splitlines()
-        logger.debug(f"JSluice output lines: {len(output)}")
-        return output, content
-    except Exception as e:
-        logger.exception(f"Unexpected error in run_jsluice for {url}: {str(e)}")
-    return [], content
+            os.unlink(temp_file_path)  # Remove the temporary file
+
+            if stderr:
+                logger.error(f"Error processing {url}: {stderr.decode()}")
+            
+            output = stdout.decode().splitlines()
+            logger.debug(f"JSluice output lines: {len(output)}")
+            return output, content
+        except Exception as e:
+            logger.exception(f"Unexpected error in run_jsluice for {url}: {str(e)}")
+        return [], content
+
+    return await run_jsluice_process()
 
 async def process_jsluice_output(jsluice_output: list[str], current_url: str, content: str, verbose: bool) -> tuple[set[str], set[str], list[dict]]:
     js_urls = set()
