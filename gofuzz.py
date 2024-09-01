@@ -988,48 +988,38 @@ async def recursive_process(initial_url, session, processed_urls, verbose, loop)
     logger.debug(f"Found {len(js_urls)} JS URLs, {len(non_js_urls)} non-JS URLs, and {len(secrets)} secrets for {initial_url}")
 
     # Add new advanced checks
-    subdomain_takeover = await loop.run_in_executor(None, check_subdomain_takeover, initial_url)
-    if subdomain_takeover:
-        secrets.append(subdomain_takeover)
-        logger.debug(f"Potential subdomain takeover detected for {initial_url}")
+    advanced_checks = [
+        (check_subdomain_takeover, "Potential subdomain takeover"),
+        (check_ssl_misconfigurations, "SSL misconfiguration"),
+        (lambda url: check_jwt_key_confusion(content, url), "JWT key confusion vulnerability"),
+        (lambda url: check_prototype_pollution(content, url), "Potential prototype pollution"),
+        (lambda url: check_deserialization_vulnerabilities(content, url), "Potential deserialization vulnerability"),
+        (lambda url: check_server_side_template_injection(content, url), "Potential SSTI vulnerability")
+    ]
 
-    ssl_misconfig = await loop.run_in_executor(None, check_ssl_misconfigurations, initial_url)
-    if ssl_misconfig:
-        secrets.append(ssl_misconfig)
-        logger.debug(f"SSL misconfiguration detected for {initial_url}")
-
-    jwt_key_confusion = await loop.run_in_executor(None, check_jwt_key_confusion, content, initial_url)
-    if jwt_key_confusion:
-        secrets.append(jwt_key_confusion)
-        logger.debug(f"JWT key confusion vulnerability detected for {initial_url}")
-
-    prototype_pollution = await loop.run_in_executor(None, check_prototype_pollution, content, initial_url)
-    if prototype_pollution:
-        secrets.append(prototype_pollution)
-        logger.debug(f"Potential prototype pollution detected for {initial_url}")
-
-    deserialization_vuln = await loop.run_in_executor(None, check_deserialization_vulnerabilities, content, initial_url)
-    if deserialization_vuln:
-        secrets.append(deserialization_vuln)
-        logger.debug(f"Potential deserialization vulnerability detected for {initial_url}")
-
-    ssti_vuln = await loop.run_in_executor(None, check_server_side_template_injection, content, initial_url)
-    if ssti_vuln:
-        secrets.append(ssti_vuln)
-        logger.debug(f"Potential SSTI vulnerability detected for {initial_url}")
+    for check_func, log_message in advanced_checks:
+        result = await loop.run_in_executor(None, check_func, initial_url)
+        if result:
+            secrets.append(result)
+            logger.debug(f"{log_message} detected for {initial_url}")
 
     tasks = []
     for url in js_urls:
         if url not in processed_urls:
-            tasks.append(recursive_process(url, session, processed_urls, verbose, loop))
+            task = asyncio.create_task(recursive_process(url, session, processed_urls, verbose, loop))
+            tasks.append(task)
 
     logger.debug(f"Created {len(tasks)} tasks for recursive processing from {initial_url}")
-    results = await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    for result_js_urls, result_non_js_urls, result_secrets in results:
-        js_urls.update(result_js_urls)
-        non_js_urls.update(result_non_js_urls)
-        secrets.extend(result_secrets)
+    for result in results:
+        if isinstance(result, Exception):
+            logger.error(f"Task for URL {initial_url} resulted in an exception: {str(result)}")
+        else:
+            result_js_urls, result_non_js_urls, result_secrets = result
+            js_urls.update(result_js_urls)
+            non_js_urls.update(result_non_js_urls)
+            secrets.extend(result_secrets)
 
     logger.debug(f"Completed recursive process for {initial_url}")
     return js_urls, non_js_urls, secrets
