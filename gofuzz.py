@@ -1,22 +1,5 @@
-import json
-import sys
-import urllib.parse
-import argparse
-from collections import OrderedDict
-import asyncio
-import aiohttp
-import tempfile
-import os
-import re
-import base64
-import ipaddress
-from urllib.parse import urlparse
-import logging
-import ssl
-import socket
-import jwt
-import datetime
-import requests
+from rich.console import Console
+from rich.table import Table
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -1067,17 +1050,44 @@ async def main():
                 all_secrets.extend(secrets)
 
 
-    # Always print found endpoints and secrets
-    for url in sorted(all_js_urls):
-        print(f"[JS] {url}")
-    for url in sorted(all_non_js_urls):
-        print(f"[Non-JS] {url}")
+    # Initialize Rich console
+    console = Console()
 
-    sorted_secrets = sorted(all_secrets, key=lambda x: (-severity_to_int(x['severity']), json.dumps(x)))
-    unique_secrets = list(OrderedDict((json.dumps(secret), secret) for secret in sorted_secrets).values())
+    # Display found JavaScript URLs
+    if all_js_urls:
+        table_js = Table(title="JavaScript URLs")
+        table_js.add_column("URL", justify="left", style="cyan", no_wrap=True)
+        for url in sorted(all_js_urls):
+            table_js.add_row(url)
+        console.print(table_js)
 
-    for secret in unique_secrets:
-        print(json.dumps(secret))
+    # Display found non-JavaScript URLs
+    if all_non_js_urls:
+        table_non_js = Table(title="Non-JavaScript URLs")
+        table_non_js.add_column("URL", justify="left", style="magenta", no_wrap=True)
+        for url in sorted(all_non_js_urls):
+            table_non_js.add_row(url)
+        console.print(table_non_js)
+
+    # Display found secrets
+    if all_secrets:
+        table_secrets = Table(title="Secrets")
+        table_secrets.add_column("Kind", justify="left", style="red", no_wrap=True)
+        table_secrets.add_column("Value", justify="left", style="yellow")
+        table_secrets.add_column("Severity", justify="left", style="green")
+        table_secrets.add_column("Context", justify="left", style="white")
+
+        sorted_secrets = sorted(all_secrets, key=lambda x: (-severity_to_int(x['severity']), json.dumps(x)))
+        unique_secrets = list(OrderedDict((json.dumps(secret), secret) for secret in sorted_secrets).values())
+
+        for secret in unique_secrets:
+            table_secrets.add_row(
+                secret['kind'],
+                secret['data']['value'],
+                secret['severity'],
+                secret.get('context', 'N/A')
+            )
+        console.print(table_secrets)
 
 
 if __name__ == "__main__":
