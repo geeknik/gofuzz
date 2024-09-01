@@ -9,6 +9,7 @@ import tempfile
 import os
 import re
 import base64
+import ipaddress
 
 def normalize_url(url, base_url):
     if url.startswith('//'):
@@ -98,11 +99,78 @@ async def process_jsluice_output(jsluice_output, current_url, content, verbose):
     secrets.extend(check_fcm(content, current_url))
     secrets.extend(check_digitalocean(content, current_url))
     secrets.extend(check_tugboat(content, current_url))
+    secrets.extend(check_internal_ips(content, current_url))
+    secrets.extend(check_graphql_introspection(content, current_url))
+    secrets.extend(check_jwt_none_algorithm(content, current_url))
+    secrets.extend(check_cors_misconfig(content, current_url))
 
     if verbose:
         print(f"Total secrets after custom checks: {len(secrets)}")
 
     return js_urls, non_js_urls, secrets
+
+def check_internal_ips(content, current_url):
+    secrets = []
+    ip_regex = r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'
+    ip_matches = re.finditer(ip_regex, content)
+    for match in ip_matches:
+        ip = match.group()
+        try:
+            if ipaddress.ip_address(ip).is_private:
+                secrets.append({
+                    'kind': 'InternalIPAddress',
+                    'data': {'value': ip, 'matched_string': match.group()},
+                    'filename': current_url,
+                    'severity': 'medium',
+                    'context': None
+                })
+        except ValueError:
+            pass
+    return secrets
+
+def check_graphql_introspection(content, current_url):
+    secrets = []
+    graphql_markers = [
+        '__schema', 'queryType', 'mutationType', 'subscriptionType',
+        'types', 'inputFields', 'interfaces', 'enumValues', 'possibleTypes'
+    ]
+    if all(marker in content for marker in graphql_markers):
+        secrets.append({
+            'kind': 'GraphQLIntrospection',
+            'data': {'value': 'Possible GraphQL Introspection detected', 'matched_string': '__schema'},
+            'filename': current_url,
+            'severity': 'medium',
+            'context': None
+        })
+    return secrets
+
+def check_jwt_none_algorithm(content, current_url):
+    secrets = []
+    jwt_none_regex = r'alg\s*:\s*["\']?none["\']?'
+    jwt_none_matches = re.finditer(jwt_none_regex, content, re.IGNORECASE)
+    for match in jwt_none_matches:
+        secrets.append({
+            'kind': 'JWTNoneAlgorithm',
+            'data': {'value': 'JWT None Algorithm detected', 'matched_string': match.group()},
+            'filename': current_url,
+            'severity': 'high',
+            'context': None
+        })
+    return secrets
+
+def check_cors_misconfig(content, current_url):
+    secrets = []
+    cors_regex = r'Access-Control-Allow-Origin\s*:\s*\*'
+    cors_matches = re.finditer(cors_regex, content, re.IGNORECASE)
+    for match in cors_matches:
+        secrets.append({
+            'kind': 'CORSMisconfiguration',
+            'data': {'value': 'CORS Misconfiguration detected', 'matched_string': match.group()},
+            'filename': current_url,
+            'severity': 'medium',
+            'context': None
+        })
+    return secrets
 
 def check_aws_cognito(content, current_url):
     secrets = []
