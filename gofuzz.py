@@ -28,22 +28,25 @@ import hashlib
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def get_context(content, start, end, context_size=50):
+def get_context(content: str, start: int, end: int, context_size: int = 50) -> str:
+    """Get context around a specific part of the content."""
     context_start = max(0, start - context_size)
     context_end = min(len(content), end + context_size)
     return content[context_start:context_end]
 
-def normalize_url(url, base_url):
+def normalize_url(url: str, base_url: str) -> str:
+    """Normalize a URL relative to a base URL."""
     if url.startswith('//'):
         return 'https:' + url
     elif not url.startswith(('http://', 'https://')):
         return urllib.parse.urljoin(base_url, url)
     return url
 
-def is_js_file(url):
-    return '.js' in url.lower()
+def is_js_file(url: str) -> bool:
+    """Check if a URL points to a JavaScript file."""
+    return url.lower().endswith('.js')
 
-async def run_jsluice(url, mode, session, verbose):
+async def run_jsluice(url: str, mode: str, session: aiohttp.ClientSession, verbose: bool) -> tuple[list[str], str]:
     try:
         async with session.get(url, timeout=30) as response:
             if response.status != 200:
@@ -70,22 +73,20 @@ async def run_jsluice(url, mode, session, verbose):
         if stderr:
             logger.error(f"Error processing {url}: {stderr.decode()}")
         return stdout.decode().splitlines(), content
-    except aiohttp.ClientError as e:
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         logger.error(f"Network error for {url}: {str(e)}")
-    except asyncio.TimeoutError:
-        logger.error(f"Timeout error for {url}")
     except Exception as e:
         logger.exception(f"Unexpected error in run_jsluice for {url}: {str(e)}")
     return [], ""
 
-async def process_jsluice_output(jsluice_output, current_url, content, verbose):
+async def process_jsluice_output(jsluice_output: list[str], current_url: str, content: str, verbose: bool) -> tuple[set[str], set[str], list[dict]]:
     js_urls = set()
     non_js_urls = set()
     secrets = []
 
     if verbose:
-        print(f"Processing output for {current_url}")
-        print(f"JSluice output lines: {len(jsluice_output)}")
+        logger.debug(f"Processing output for {current_url}")
+        logger.debug(f"JSluice output lines: {len(jsluice_output)}")
 
     for line in jsluice_output:
         try:
@@ -102,36 +103,32 @@ async def process_jsluice_output(jsluice_output, current_url, content, verbose):
                         parsed_url.query,
                         parsed_url.fragment
                     ))
-                    if is_js_file(new_url):
-                        js_urls.add(new_url)
-                    else:
-                        non_js_urls.add(new_url)
+                    (js_urls if is_js_file(new_url) else non_js_urls).add(new_url)
             elif 'kind' in data:
                 data['original_file'] = current_url
                 secrets.append(data)
         except json.JSONDecodeError:
             if verbose:
-                print(f"Error decoding JSON: {line}", file=sys.stderr)
+                logger.warning(f"Error decoding JSON: {line}")
 
     if verbose:
-        print(f"Found {len(js_urls)} JavaScript URLs")
-        print(f"Found {len(non_js_urls)} non-JavaScript URLs")
-        print(f"Found {len(secrets)} secrets from JSluice")
+        logger.debug(f"Found {len(js_urls)} JavaScript URLs")
+        logger.debug(f"Found {len(non_js_urls)} non-JavaScript URLs")
+        logger.debug(f"Found {len(secrets)} secrets from JSluice")
 
     # Add custom checks
-    secrets.extend(check_aws_cognito(content, current_url))
-    secrets.extend(check_razorpay(content, current_url))
-    secrets.extend(check_mapbox(content, current_url))
-    secrets.extend(check_fcm(content, current_url))
-    secrets.extend(check_digitalocean(content, current_url))
-    secrets.extend(check_tugboat(content, current_url))
-    secrets.extend(check_internal_ips(content, current_url))
-    secrets.extend(check_graphql_introspection(content, current_url))
-    secrets.extend(check_jwt_none_algorithm(content, current_url))
-    secrets.extend(check_cors_misconfig(content, current_url))
+    custom_checks = [
+        check_aws_cognito, check_razorpay, check_mapbox, check_fcm,
+        check_digitalocean, check_tugboat, check_internal_ips,
+        check_graphql_introspection, check_jwt_none_algorithm,
+        check_cors_misconfig
+    ]
+    
+    for check in custom_checks:
+        secrets.extend(check(content, current_url))
 
     if verbose:
-        print(f"Total secrets after custom checks: {len(secrets)}")
+        logger.debug(f"Total secrets after custom checks: {len(secrets)}")
 
     return js_urls, non_js_urls, secrets
 
