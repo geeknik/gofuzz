@@ -78,17 +78,16 @@ url_content_cache = {}
 async def run_jsluice(url: str, mode: str, session: aiohttp.ClientSession, verbose: bool) -> tuple[list[str], str]:
     logger.debug(f"Running JSluice on {url} with mode {mode}")
     
-    # Check if content is already in cache
-    if url in url_content_cache:
-        content = url_content_cache[url]
-    else:
+    # Fetch content if not in cache
+    if url not in url_content_cache:
         content = await fetch_url_content(url, session)
         if content:
             url_content_cache[url] = content
+        else:
+            logger.warning(f"No content fetched for {url}")
+            return [], ""
     
-    if not content:
-        logger.warning(f"No content fetched for {url}")
-        return [], ""
+    content = url_content_cache[url]
 
     try:
         with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_file:
