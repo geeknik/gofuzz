@@ -327,7 +327,7 @@ def check_cors_misconfig(content, current_url):
     secrets = []
     cors_regex = r'Access-Control-Allow-Origin\s*:\s*\*'
     cors_matches = re.finditer(cors_regex, content, re.IGNORECASE)
-    for match in matches:
+    for match in cors_matches:
         context = get_context(content, match.start(), match.end())
         poc = f'''
 # CORS Misconfiguration POC
