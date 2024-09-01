@@ -622,7 +622,7 @@ def check_prototype_pollution(content, current_url):
 def merge(target, source):
     for key in source:
         if isinstance(source[key], dict):
-            target[key] = merge(target.get(key, {}), source[key])
+            target[key] = merge(target.get(key, {{}}, source[key]))
         else:
             target[key] = source[key]
     return target
