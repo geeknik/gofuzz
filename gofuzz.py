@@ -53,7 +53,6 @@ def is_js_file(url: str) -> bool:
     """Check if a URL points to a JavaScript file."""
     return url.lower().endswith('.js')
 
-@lru_cache(maxsize=1000)
 async def fetch_url_content(url: str, session: aiohttp.ClientSession) -> str:
     logger.debug(f"Attempting to fetch content from {url}")
     try:
