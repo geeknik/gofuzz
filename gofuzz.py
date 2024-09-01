@@ -974,7 +974,7 @@ def check_tugboat(content, current_url):
     
     return secrets
 
-async def recursive_process(initial_url, session, processed_urls, verbose):
+async def recursive_process(initial_url, session, processed_urls, verbose, loop):
     logger.debug(f"Starting recursive process for {initial_url}")
     if initial_url in processed_urls:
         logger.debug(f"URL {initial_url} already processed, skipping")
@@ -988,32 +988,32 @@ async def recursive_process(initial_url, session, processed_urls, verbose):
     logger.debug(f"Found {len(js_urls)} JS URLs, {len(non_js_urls)} non-JS URLs, and {len(secrets)} secrets for {initial_url}")
 
     # Add new advanced checks
-    subdomain_takeover = check_subdomain_takeover(initial_url)
+    subdomain_takeover = await loop.run_in_executor(None, check_subdomain_takeover, initial_url)
     if subdomain_takeover:
         secrets.append(subdomain_takeover)
         logger.debug(f"Potential subdomain takeover detected for {initial_url}")
 
-    ssl_misconfig = check_ssl_misconfigurations(initial_url)
+    ssl_misconfig = await loop.run_in_executor(None, check_ssl_misconfigurations, initial_url)
     if ssl_misconfig:
         secrets.append(ssl_misconfig)
         logger.debug(f"SSL misconfiguration detected for {initial_url}")
 
-    jwt_key_confusion = check_jwt_key_confusion(content, initial_url)
+    jwt_key_confusion = await loop.run_in_executor(None, check_jwt_key_confusion, content, initial_url)
     if jwt_key_confusion:
         secrets.append(jwt_key_confusion)
         logger.debug(f"JWT key confusion vulnerability detected for {initial_url}")
 
-    prototype_pollution = check_prototype_pollution(content, initial_url)
+    prototype_pollution = await loop.run_in_executor(None, check_prototype_pollution, content, initial_url)
     if prototype_pollution:
         secrets.append(prototype_pollution)
         logger.debug(f"Potential prototype pollution detected for {initial_url}")
 
-    deserialization_vuln = check_deserialization_vulnerabilities(content, initial_url)
+    deserialization_vuln = await loop.run_in_executor(None, check_deserialization_vulnerabilities, content, initial_url)
     if deserialization_vuln:
         secrets.append(deserialization_vuln)
         logger.debug(f"Potential deserialization vulnerability detected for {initial_url}")
 
-    ssti_vuln = check_server_side_template_injection(content, initial_url)
+    ssti_vuln = await loop.run_in_executor(None, check_server_side_template_injection, content, initial_url)
     if ssti_vuln:
         secrets.append(ssti_vuln)
         logger.debug(f"Potential SSTI vulnerability detected for {initial_url}")
@@ -1021,7 +1021,7 @@ async def recursive_process(initial_url, session, processed_urls, verbose):
     tasks = []
     for url in js_urls:
         if url not in processed_urls:
-            tasks.append(recursive_process(url, session, processed_urls, verbose))
+            tasks.append(recursive_process(url, session, processed_urls, verbose, loop))
 
     logger.debug(f"Created {len(tasks)} tasks for recursive processing from {initial_url}")
     results = await asyncio.gather(*tasks)
@@ -1058,19 +1058,19 @@ async def main():
     all_secrets = []
     processed_urls = set()
 
+    loop = asyncio.get_event_loop()
+
     async with aiohttp.ClientSession() as session:
         tasks = []
         for initial_url in sys.stdin:
             initial_url = initial_url.strip()
             if initial_url:
                 logger.debug(f"Processing URL: {initial_url}")
-                tasks.append(recursive_process(initial_url, session, processed_urls, args.verbose))
+                tasks.append(recursive_process(initial_url, session, processed_urls, args.verbose, loop))
 
         logger.info(f"Total tasks created: {len(tasks)}")
         
-        with ThreadPoolExecutor(max_workers=args.threads) as executor:
-            loop = asyncio.get_event_loop()
-            results = await asyncio.gather(*[loop.run_in_executor(executor, asyncio.run, task) for task in tasks])
+        results = await asyncio.gather(*tasks)
         
         logger.info("All tasks completed")
 
