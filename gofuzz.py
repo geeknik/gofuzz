@@ -26,8 +26,7 @@ url_content_cache = {}
 logger = logging.getLogger(__name__)
 
 # Custom UserAgent
-USER_AGENT = "GoFuzz/1.0 (+https://github.com/your-repo/gofuzz)"
-
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.105 Safari/537.36"
 
 # Semaphore for limiting concurrent connections
 MAX_CONCURRENT_REQUESTS = 20
