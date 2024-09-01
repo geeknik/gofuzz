@@ -1102,7 +1102,7 @@ async def main():
         for secret in unique_secrets:
             table_secrets.add_row(
                 secret['kind'],
-                secret['data']['value'],
+                secret['data'].get('value', 'N/A'),
                 secret['severity'],
                 secret.get('context', 'N/A')
             )
