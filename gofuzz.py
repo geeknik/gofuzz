@@ -14,6 +14,13 @@ import requests
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 import logging
+import ssl
+import socket
+import subprocess
+import jwt
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -345,6 +352,158 @@ def verify_cors_misconfig(url):
         pass
     return False
 
+def check_subdomain_takeover(url):
+    try:
+        parsed_url = urlparse(url)
+        ip = socket.gethostbyname(parsed_url.netloc)
+        if ip in ['127.0.0.1', '0.0.0.0']:
+            return {
+                'kind': 'PotentialSubdomainTakeover',
+                'data': {'value': url, 'ip': ip},
+                'filename': url,
+                'severity': 'high',
+                'description': f"Potential subdomain takeover vulnerability detected for {url}. IP resolves to {ip}."
+            }
+    except socket.gaierror:
+        return {
+            'kind': 'PotentialSubdomainTakeover',
+            'data': {'value': url},
+            'filename': url,
+            'severity': 'high',
+            'description': f"Potential subdomain takeover vulnerability detected for {url}. Domain does not resolve."
+        }
+    return None
+
+def check_ssl_misconfigurations(url):
+    try:
+        parsed_url = urlparse(url)
+        hostname = parsed_url.netloc
+        context = ssl.create_default_context()
+        with socket.create_connection((hostname, 443)) as sock:
+            with context.wrap_socket(sock, server_hostname=hostname) as secure_sock:
+                cert = secure_sock.getpeercert()
+                
+                # Check for weak cipher suites
+                ciphers = secure_sock.cipher()
+                if ciphers[0] in ['TLS_RSA_WITH_RC4_128_SHA', 'TLS_RSA_WITH_RC4_128_MD5']:
+                    return {
+                        'kind': 'WeakSSLCipher',
+                        'data': {'value': ciphers[0]},
+                        'filename': url,
+                        'severity': 'high',
+                        'description': f"Weak SSL cipher suite detected: {ciphers[0]}"
+                    }
+                
+                # Check for expired certificates
+                import datetime
+                exp_date = datetime.datetime.strptime(cert['notAfter'], "%b %d %H:%M:%S %Y %Z")
+                if exp_date < datetime.datetime.now():
+                    return {
+                        'kind': 'ExpiredSSLCertificate',
+                        'data': {'value': cert['notAfter']},
+                        'filename': url,
+                        'severity': 'high',
+                        'description': f"SSL certificate expired on {cert['notAfter']}"
+                    }
+                
+    except Exception as e:
+        return {
+            'kind': 'SSLError',
+            'data': {'value': str(e)},
+            'filename': url,
+            'severity': 'medium',
+            'description': f"Error occurred while checking SSL: {str(e)}"
+        }
+    return None
+
+def check_jwt_key_confusion(content, current_url):
+    jwt_regex = r'eyJ[A-Za-z0-9-_=]+\.eyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_.+/=]+'
+    jwt_matches = re.finditer(jwt_regex, content)
+    for match in jwt_matches:
+        token = match.group()
+        try:
+            header = jwt.get_unverified_header(token)
+            if 'alg' in header and header['alg'] == 'HS256':
+                # Try to verify with a common public key
+                public_key = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu1SU1LfVLPHCozMxH2Mo\n4lgOEePzNm0tRgeLezV6ffAt0gunVTLw7onLRnrq0/IzW7yWR7QkrmBL7jTKEn5u\n+qKhbwKfBstIs+bMY2Zkp18gnTxKLxoS2tFczGkPLPgizskuemMghRniWaoLcyeh\nkd3qqGElvW/VDL5AaWTg0nLVkjRo9z+40RQzuVaE8AkAFmxZzow3x+VJYKdjykkJ\n0iT9wCS0DRTXu269V264Vf/3jvredZiKRkgwlL9xNAwxXFg0x/XFw005UWVRIkdg\ncKWTjpBP2dPwVZ4WWC+9aGVd+Gyn1o0CLelf4rEjGoXbAAEgAqeGUxrcIlbjXfbc\nmwIDAQAB\n-----END PUBLIC KEY-----"
+                try:
+                    jwt.decode(token, public_key, algorithms=['HS256'])
+                    return {
+                        'kind': 'JWTKeyConfusionVulnerability',
+                        'data': {'value': token[:20] + '...'},
+                        'filename': current_url,
+                        'severity': 'critical',
+                        'description': "Potential JWT key confusion vulnerability. The token uses HS256 algorithm and can be verified with a common public key."
+                    }
+                except:
+                    pass
+        except:
+            pass
+    return None
+
+def check_prototype_pollution(content, current_url):
+    pollution_patterns = [
+        r'Object\.assign\s*\(\s*{}\s*,',
+        r'Object\.prototype\.__proto__',
+        r'__proto__\s*[=:]',
+        r'prototype\s*[=:]'
+    ]
+    
+    for pattern in pollution_patterns:
+        matches = re.finditer(pattern, content)
+        for match in matches:
+            context = get_context(content, match.start(), match.end())
+            return {
+                'kind': 'PotentialPrototypePollution',
+                'data': {'value': match.group(), 'context': context},
+                'filename': current_url,
+                'severity': 'high',
+                'description': f"Potential prototype pollution vulnerability detected in {current_url}. This could lead to object property manipulation and potential RCE."
+            }
+    return None
+
+def check_deserialization_vulnerabilities(content, current_url):
+    deser_patterns = [
+        r'JSON\.parse\s*\(',
+        r'eval\s*\(',
+        r'unserialize\s*\(',
+        r'deserialize\s*\('
+    ]
+    
+    for pattern in deser_patterns:
+        matches = re.finditer(pattern, content)
+        for match in matches:
+            context = get_context(content, match.start(), match.end())
+            return {
+                'kind': 'PotentialDeserializationVulnerability',
+                'data': {'value': match.group(), 'context': context},
+                'filename': current_url,
+                'severity': 'high',
+                'description': f"Potential deserialization vulnerability detected in {current_url}. This could lead to remote code execution if user input is not properly sanitized."
+            }
+    return None
+
+def check_server_side_template_injection(content, current_url):
+    ssti_patterns = [
+        r'\{\{\s*.*\s*\}\}',  # Jinja2/Twig
+        r'\$\{.*\}',  # JSP/JSF
+        r'<\%.*\%>',  # ASP/JSP
+        r'\#\{.*\}'   # Ruby ERB
+    ]
+    
+    for pattern in ssti_patterns:
+        matches = re.finditer(pattern, content)
+        for match in matches:
+            context = get_context(content, match.start(), match.end())
+            return {
+                'kind': 'PotentialServerSideTemplateInjection',
+                'data': {'value': match.group(), 'context': context},
+                'filename': current_url,
+                'severity': 'high',
+                'description': f"Potential server-side template injection vulnerability detected in {current_url}. This could lead to remote code execution if user input is not properly sanitized."
+            }
+    return None
+
 def check_aws_cognito(content, current_url):
     secrets = []
     cognito_markers = [
@@ -513,6 +672,31 @@ async def recursive_process(initial_url, session, processed_urls, verbose):
     secrets_output, _ = await run_jsluice(initial_url, 'secrets', session, verbose)
 
     js_urls, non_js_urls, secrets = await process_jsluice_output(urls_output + secrets_output, initial_url, content, verbose)
+
+    # Add new advanced checks
+    subdomain_takeover = check_subdomain_takeover(initial_url)
+    if subdomain_takeover:
+        secrets.append(subdomain_takeover)
+
+    ssl_misconfig = check_ssl_misconfigurations(initial_url)
+    if ssl_misconfig:
+        secrets.append(ssl_misconfig)
+
+    jwt_key_confusion = check_jwt_key_confusion(content, initial_url)
+    if jwt_key_confusion:
+        secrets.append(jwt_key_confusion)
+
+    prototype_pollution = check_prototype_pollution(content, initial_url)
+    if prototype_pollution:
+        secrets.append(prototype_pollution)
+
+    deserialization_vuln = check_deserialization_vulnerabilities(content, initial_url)
+    if deserialization_vuln:
+        secrets.append(deserialization_vuln)
+
+    ssti_vuln = check_server_side_template_injection(content, initial_url)
+    if ssti_vuln:
+        secrets.append(ssti_vuln)
 
     tasks = []
     for url in js_urls:
