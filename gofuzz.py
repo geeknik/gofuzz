@@ -22,7 +22,7 @@ from functools import lru_cache
 import requests
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Custom UserAgent
@@ -55,6 +55,7 @@ def is_js_file(url: str) -> bool:
 
 @lru_cache(maxsize=1000)
 async def fetch_url_content(url: str, session: aiohttp.ClientSession) -> str:
+    logger.debug(f"Attempting to fetch content from {url}")
     try:
         async with semaphore:
             async with session.get(url, timeout=30, headers={"User-Agent": USER_AGENT}) as response:
@@ -63,6 +64,7 @@ async def fetch_url_content(url: str, session: aiohttp.ClientSession) -> str:
                     return ""
                 content = await response.text()
                 logger.info(f"Fetched: {url}")
+                logger.debug(f"Content length: {len(content)}")
                 return content
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         logger.error(f"Network error for {url}: {str(e)}")
@@ -71,8 +73,10 @@ async def fetch_url_content(url: str, session: aiohttp.ClientSession) -> str:
     return ""
 
 async def run_jsluice(url: str, mode: str, session: aiohttp.ClientSession, verbose: bool) -> tuple[list[str], str]:
+    logger.debug(f"Running JSluice on {url} with mode {mode}")
     content = await fetch_url_content(url, session)
     if not content:
+        logger.warning(f"No content fetched for {url}")
         return [], ""
 
     try:
@@ -93,7 +97,10 @@ async def run_jsluice(url: str, mode: str, session: aiohttp.ClientSession, verbo
 
         if stderr:
             logger.error(f"Error processing {url}: {stderr.decode()}")
-        return stdout.decode().splitlines(), content
+        
+        output = stdout.decode().splitlines()
+        logger.debug(f"JSluice output lines: {len(output)}")
+        return output, content
     except Exception as e:
         logger.exception(f"Unexpected error in run_jsluice for {url}: {str(e)}")
     return [], content
@@ -968,7 +975,9 @@ def check_tugboat(content, current_url):
     return secrets
 
 async def recursive_process(initial_url, session, processed_urls, verbose):
+    logger.debug(f"Starting recursive process for {initial_url}")
     if initial_url in processed_urls:
+        logger.debug(f"URL {initial_url} already processed, skipping")
         return set(), set(), []
     processed_urls.add(initial_url)
 
@@ -976,37 +985,45 @@ async def recursive_process(initial_url, session, processed_urls, verbose):
     secrets_output, _ = await run_jsluice(initial_url, 'secrets', session, verbose)
 
     js_urls, non_js_urls, secrets = await process_jsluice_output(urls_output + secrets_output, initial_url, content, verbose)
+    logger.debug(f"Found {len(js_urls)} JS URLs, {len(non_js_urls)} non-JS URLs, and {len(secrets)} secrets for {initial_url}")
 
     # Add new advanced checks
     subdomain_takeover = check_subdomain_takeover(initial_url)
     if subdomain_takeover:
         secrets.append(subdomain_takeover)
+        logger.debug(f"Potential subdomain takeover detected for {initial_url}")
 
     ssl_misconfig = check_ssl_misconfigurations(initial_url)
     if ssl_misconfig:
         secrets.append(ssl_misconfig)
+        logger.debug(f"SSL misconfiguration detected for {initial_url}")
 
     jwt_key_confusion = check_jwt_key_confusion(content, initial_url)
     if jwt_key_confusion:
         secrets.append(jwt_key_confusion)
+        logger.debug(f"JWT key confusion vulnerability detected for {initial_url}")
 
     prototype_pollution = check_prototype_pollution(content, initial_url)
     if prototype_pollution:
         secrets.append(prototype_pollution)
+        logger.debug(f"Potential prototype pollution detected for {initial_url}")
 
     deserialization_vuln = check_deserialization_vulnerabilities(content, initial_url)
     if deserialization_vuln:
         secrets.append(deserialization_vuln)
+        logger.debug(f"Potential deserialization vulnerability detected for {initial_url}")
 
     ssti_vuln = check_server_side_template_injection(content, initial_url)
     if ssti_vuln:
         secrets.append(ssti_vuln)
+        logger.debug(f"Potential SSTI vulnerability detected for {initial_url}")
 
     tasks = []
     for url in js_urls:
         if url not in processed_urls:
             tasks.append(recursive_process(url, session, processed_urls, verbose))
 
+    logger.debug(f"Created {len(tasks)} tasks for recursive processing from {initial_url}")
     results = await asyncio.gather(*tasks)
 
     for result_js_urls, result_non_js_urls, result_secrets in results:
@@ -1014,6 +1031,7 @@ async def recursive_process(initial_url, session, processed_urls, verbose):
         non_js_urls.update(result_non_js_urls)
         secrets.extend(result_secrets)
 
+    logger.debug(f"Completed recursive process for {initial_url}")
     return js_urls, non_js_urls, secrets
 
 def severity_to_int(severity):
