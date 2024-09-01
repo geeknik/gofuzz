@@ -12,6 +12,8 @@ import base64
 import ipaddress
 import requests
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
+import logging
 
 def get_context(content, start, end, context_size=50):
     context_start = max(0, start - context_size)
@@ -31,33 +33,37 @@ def is_js_file(url):
 async def run_jsluice(url, mode, session, verbose):
     try:
         async with session.get(url, timeout=30) as response:
+            if response.status != 200:
+                logger.warning(f"Failed to fetch {url}: HTTP {response.status}")
+                return [], ""
             content = await response.text()
-            if verbose:
-                print(f"Fetched: {url}")
+            logger.info(f"Fetched: {url}")
 
-            with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_file:
-                temp_file.write(content)
-                temp_file_path = temp_file.name
+        with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_file:
+            temp_file.write(content)
+            temp_file_path = temp_file.name
 
-            cmd = f"jsluice {mode} -R '{url}' {temp_file_path}"
-            if verbose:
-                print(f"Running command: {cmd}")
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await proc.communicate()
+        cmd = f"jsluice {mode} -R '{url}' {temp_file_path}"
+        logger.debug(f"Running command: {cmd}")
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
 
-            os.unlink(temp_file_path)  # Remove the temporary file
+        os.unlink(temp_file_path)  # Remove the temporary file
 
-            if stderr and verbose:
-                print(f"Error processing {url}: {stderr.decode()}", file=sys.stderr)
-            return stdout.decode().splitlines(), content
+        if stderr:
+            logger.error(f"Error processing {url}: {stderr.decode()}")
+        return stdout.decode().splitlines(), content
+    except aiohttp.ClientError as e:
+        logger.error(f"Network error for {url}: {str(e)}")
+    except asyncio.TimeoutError:
+        logger.error(f"Timeout error for {url}")
     except Exception as e:
-        if verbose:
-            print(f"Error in run_jsluice for {url}: {str(e)}", file=sys.stderr)
-        return [], ""
+        logger.exception(f"Unexpected error in run_jsluice for {url}: {str(e)}")
+    return [], ""
 
 async def process_jsluice_output(jsluice_output, current_url, content, verbose):
     js_urls = set()
@@ -344,37 +350,40 @@ def check_aws_cognito(content, current_url):
     ]
 
     for marker in cognito_markers:
-        match = re.search(rf'{marker}\s*[=:]\s*["\']?([^"\']+)["\']?', content)
-        if match:
+        matches = re.finditer(rf'{marker}\s*[=:]\s*["\']?([^"\']+)["\']?', content)
+        for match in matches:
+            context = get_context(content, match.start(), match.end())
             secrets.append({
                 'kind': 'AWSCognitoConfiguration',
-                'data': {'marker': marker, 'matched_string': match.group()},
+                'data': {'marker': marker, 'value': match.group(1), 'matched_string': match.group()},
                 'filename': current_url,
                 'severity': 'info',
-                'context': None
+                'context': context
             })
 
     pool_id_regex = r'(us|ap|ca|cn|eu|sa)-[a-z]+-\d:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}'
     pool_ids = re.finditer(pool_id_regex, content)
     for match in pool_ids:
+        context = get_context(content, match.start(), match.end())
         secrets.append({
             'kind': 'AWSCognitoPoolID',
             'data': {'value': match.group(), 'matched_string': match.group()},
             'filename': current_url,
             'severity': 'medium',
-            'context': None
+            'context': context
         })
 
     partial_pool_id_regex = r'(us|ap|ca|cn|eu|sa)-[a-z]+-\d[:\w-]{10,}'
     partial_pool_ids = re.finditer(partial_pool_id_regex, content)
     for match in partial_pool_ids:
         if match.group() not in [s['data']['value'] for s in secrets if s['kind'] == 'AWSCognitoPoolID']:
+            context = get_context(content, match.start(), match.end())
             secrets.append({
                 'kind': 'PossibleAWSCognitoPoolID',
                 'data': {'value': match.group(), 'matched_string': match.group()},
                 'filename': current_url,
                 'severity': 'low',
-                'context': None
+                'context': context
             })
 
     # Check for potential Cognito tokens
@@ -384,12 +393,13 @@ def check_aws_cognito(content, current_url):
         token = match.group()
         token_type = validate_cognito_token(token)
         if token_type:
+            context = get_context(content, match.start(), match.end())
             secrets.append({
                 'kind': f'AWSCognito{token_type}Token',
                 'data': {'value': token[:20] + '...', 'matched_string': match.group()},
                 'filename': current_url,
                 'severity': 'high' if token_type == 'Authenticated' else 'medium',
-                'context': None
+                'context': context
             })
 
     return secrets
@@ -524,10 +534,15 @@ async def main():
                         help="Specify what to hunt for: endpoints, secrets, or both (default: both)")
     parser.add_argument('-v', '--verbose', action='store_true',
                         help="Enable verbose output")
+    parser.add_argument('-t', '--threads', type=int, default=10,
+                        help="Number of threads to use for I/O-bound operations (default: 10)")
     args = parser.parse_args()
 
-    print("Debug: Starting main function")
-    print(f"Debug: Mode: {args.mode}, Verbose: {args.verbose}")
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+
+    logger.info("Starting main function")
+    logger.info(f"Mode: {args.mode}, Verbose: {args.verbose}, Threads: {args.threads}")
 
     all_urls = set()
     all_secrets = []
@@ -538,39 +553,42 @@ async def main():
         for initial_url in sys.stdin:
             initial_url = initial_url.strip()
             if initial_url:
-                print(f"Debug: Processing URL: {initial_url}")
+                logger.debug(f"Processing URL: {initial_url}")
                 tasks.append(recursive_process(initial_url, session, processed_urls, args.verbose))
 
-        print(f"Debug: Total tasks created: {len(tasks)}")
-        results = await asyncio.gather(*tasks)
-        print("Debug: All tasks completed")
+        logger.info(f"Total tasks created: {len(tasks)}")
+        
+        with ThreadPoolExecutor(max_workers=args.threads) as executor:
+            loop = asyncio.get_event_loop()
+            results = await asyncio.gather(*[loop.run_in_executor(executor, asyncio.run, task) for task in tasks])
+        
+        logger.info("All tasks completed")
 
         for js_urls, non_js_urls, secrets in results:
             all_urls.update(non_js_urls)
             all_secrets.extend(secrets)
 
-    print(f"Debug: Total URLs found: {len(all_urls)}")
-    print(f"Debug: Total secrets found: {len(all_secrets)}")
+    logger.info(f"Total URLs found: {len(all_urls)}")
+    logger.info(f"Total secrets found: {len(all_secrets)}")
 
     if args.mode in ['endpoints', 'both']:
-        print("Debug: Printing endpoints")
+        logger.info("Printing endpoints")
         for url in sorted(all_urls):
             print(url)
 
     if args.mode in ['secrets', 'both']:
-        print("Debug: Processing and printing secrets")
+        logger.info("Processing and printing secrets")
         sorted_secrets = sorted(all_secrets, key=lambda x: (-severity_to_int(x['severity']), json.dumps(x)))
         unique_secrets = list(OrderedDict((json.dumps(secret), secret) for secret in sorted_secrets).values())
 
         for secret in unique_secrets:
             print(json.dumps(secret))
 
-    if args.verbose:
-        print(f"Total URLs processed: {len(processed_urls)}")
-        print(f"Total unique non-JS URLs found: {len(all_urls)}")
-        print(f"Total secrets found: {len(all_secrets)}")
+    logger.info(f"Total URLs processed: {len(processed_urls)}")
+    logger.info(f"Total unique non-JS URLs found: {len(all_urls)}")
+    logger.info(f"Total secrets found: {len(all_secrets)}")
 
-    print("Debug: Main function completed")
+    logger.info("Main function completed")
 
 if __name__ == "__main__":
     asyncio.run(main())
