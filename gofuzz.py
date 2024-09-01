@@ -117,8 +117,12 @@ def check_internal_ips(content, current_url):
     ip_matches = re.finditer(ip_regex, content)
     for match in ip_matches:
         ip = match.group()
+        start = max(0, match.start() - 50)
+        end = min(len(content), match.end() + 50)
+        context = content[start:end]
+        
         # Check if the IP is not part of a version number or other common patterns
-        if not re.search(r'\d+\.\d+\.\d+\.\d+[-\w]', match.string[max(0, match.start()-1):match.end()+1]):
+        if not re.search(r'\d+\.\d+\.\d+\.\d+[-\w]', context):
             try:
                 ip_obj = ipaddress.ip_address(ip)
                 # Exclude 0.0.0.0 and 0.0.0.1
@@ -128,16 +132,20 @@ def check_internal_ips(content, current_url):
                         not ip_obj.is_loopback and
                         not ip_obj.is_link_local and
                         not ip_obj.is_multicast):
-                        poc = f"curl -I {current_url}"
-                        secrets.append({
-                            'kind': 'InternalIPAddress',
-                            'data': {'value': ip, 'matched_string': match.group()},
-                            'filename': current_url,
-                            'severity': 'medium',
-                            'context': None,
-                            'poc': poc,
-                            'description': f"Potential internal IP address {ip} found in {current_url}. This may reveal information about the internal network structure."
-                        })
+                        
+                        # Check surrounding context for keywords that might indicate an internal IP
+                        internal_keywords = ['internal', 'private', 'local', 'network', 'intranet', 'vpn']
+                        if any(keyword in context.lower() for keyword in internal_keywords):
+                            poc = f"curl -I {current_url}"
+                            secrets.append({
+                                'kind': 'InternalIPAddress',
+                                'data': {'value': ip, 'matched_string': match.group()},
+                                'filename': current_url,
+                                'severity': 'medium',
+                                'context': context,
+                                'poc': poc,
+                                'description': f"Potential internal IP address {ip} found in {current_url}. This may reveal information about the internal network structure."
+                            })
             except ValueError:
                 pass
     return secrets
