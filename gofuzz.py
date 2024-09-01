@@ -11,14 +11,11 @@ import re
 import base64
 import ipaddress
 from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor
 import logging
 import ssl
 import socket
 import jwt
 import datetime
-import hashlib
-from functools import lru_cache
 import requests
 
 # Configure logging
@@ -69,8 +66,6 @@ async def fetch_url_content(url: str, session: aiohttp.ClientSession) -> str:
         logger.exception(f"Unexpected error fetching {url}: {str(e)}")
     return ""
 
-# Cache to store fetched content
-url_content_cache = {}
 
 async def run_jsluice(url: str, mode: str, session: aiohttp.ClientSession, verbose: bool) -> tuple[list[str], str]:
     logger.debug(f"Running JSluice on {url} with mode {mode}")
