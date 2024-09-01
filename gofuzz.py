@@ -132,7 +132,7 @@ async def process_jsluice_output(jsluice_output: list[str], current_url: str, co
                 url = normalize_url(data['url'], current_url)
                 try:
                     parsed_url = urllib.parse.urlparse(url)
-                    if parsed_url.scheme and parsed_url.netloc:
+                    if parsed_url.scheme and parsed_url.netloc and not re.search(r'\[.*\]', url):
                         new_url = urllib.parse.urlunparse((
                             parsed_url.scheme,
                             parsed_url.netloc,
