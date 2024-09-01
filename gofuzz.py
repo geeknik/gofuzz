@@ -1070,13 +1070,21 @@ async def main():
 
         logger.info(f"Total tasks created: {len(tasks)}")
         
-        results = await asyncio.gather(*tasks)
+        try:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        except Exception as e:
+            logger.error(f"Error during task execution: {str(e)}")
+            results = []
         
         logger.info("All tasks completed")
 
-        for js_urls, non_js_urls, secrets in results:
-            all_urls.update(non_js_urls)
-            all_secrets.extend(secrets)
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(f"Task resulted in an exception: {str(result)}")
+            else:
+                js_urls, non_js_urls, secrets = result
+                all_urls.update(non_js_urls)
+                all_secrets.extend(secrets)
 
     logger.info(f"Total URLs found: {len(all_urls)}")
     logger.info(f"Total secrets found: {len(all_secrets)}")
