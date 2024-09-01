@@ -15,6 +15,10 @@ from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 import logging
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 def get_context(content, start, end, context_size=50):
     context_start = max(0, start - context_size)
     context_end = min(len(content), end + context_size)
