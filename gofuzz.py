@@ -19,6 +19,7 @@ import datetime
 import requests
 from rich.console import Console
 from rich.table import Table
+from rich.markup import escape
 
 # Configure logging
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -1101,10 +1102,10 @@ async def main():
 
         for secret in unique_secrets:
             table_secrets.add_row(
-                str(secret['kind']),
-                str(secret['data'].get('value', 'N/A')),
-                str(secret['severity']),
-                str(secret.get('context', 'N/A'))
+                escape(str(secret['kind'])),
+                escape(str(secret['data'].get('value', 'N/A'))),
+                escape(str(secret['severity'])),
+                escape(str(secret.get('context', 'N/A')))
             )
         console.print(table_secrets)
 
