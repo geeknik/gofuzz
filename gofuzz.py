@@ -22,14 +22,12 @@ from functools import lru_cache
 import requests
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Custom UserAgent
 USER_AGENT = "GoFuzz/1.0 (+https://github.com/your-repo/gofuzz)"
 
-# URL content cache
-url_content_cache = {}
 
 # Semaphore for limiting concurrent connections
 MAX_CONCURRENT_REQUESTS = 20
