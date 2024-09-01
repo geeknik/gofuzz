@@ -1003,26 +1003,19 @@ async def recursive_process(initial_url, session, processed_urls, verbose, loop)
             secrets.append(result)
             logger.debug(f"{log_message} detected for {initial_url}")
 
-    tasks = []
+    all_js_urls = set(js_urls)
+    all_non_js_urls = set(non_js_urls)
+    all_secrets = list(secrets)
+
     for url in js_urls:
         if url not in processed_urls:
-            task = asyncio.create_task(recursive_process(url, session, processed_urls, verbose, loop))
-            tasks.append(task)
-
-    logger.debug(f"Created {len(tasks)} tasks for recursive processing from {initial_url}")
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    for result in results:
-        if isinstance(result, Exception):
-            logger.error(f"Task for URL {initial_url} resulted in an exception: {str(result)}")
-        else:
-            result_js_urls, result_non_js_urls, result_secrets = result
-            js_urls.update(result_js_urls)
-            non_js_urls.update(result_non_js_urls)
-            secrets.extend(result_secrets)
+            result_js_urls, result_non_js_urls, result_secrets = await recursive_process(url, session, processed_urls, verbose, loop)
+            all_js_urls.update(result_js_urls)
+            all_non_js_urls.update(result_non_js_urls)
+            all_secrets.extend(result_secrets)
 
     logger.debug(f"Completed recursive process for {initial_url}")
-    return js_urls, non_js_urls, secrets
+    return all_js_urls, all_non_js_urls, all_secrets
 
 def severity_to_int(severity):
     severity_map = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1, 'info': 0}
@@ -1044,45 +1037,33 @@ async def main():
     logger.info("Starting main function")
     logger.info(f"Mode: {args.mode}, Verbose: {args.verbose}, Threads: {args.threads}")
 
-    all_urls = set()
+    all_js_urls = set()
+    all_non_js_urls = set()
     all_secrets = []
     processed_urls = set()
 
     loop = asyncio.get_event_loop()
 
     async with aiohttp.ClientSession() as session:
-        tasks = []
         for initial_url in sys.stdin:
             initial_url = initial_url.strip()
             if initial_url:
                 logger.debug(f"Processing URL: {initial_url}")
-                tasks.append(recursive_process(initial_url, session, processed_urls, args.verbose, loop))
-
-        logger.info(f"Total tasks created: {len(tasks)}")
-        
-        try:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-        except Exception as e:
-            logger.error(f"Error during task execution: {str(e)}")
-            results = []
-        
-        logger.info("All tasks completed")
-
-        for result in results:
-            if isinstance(result, Exception):
-                logger.error(f"Task resulted in an exception: {str(result)}")
-            else:
-                js_urls, non_js_urls, secrets = result
-                all_urls.update(non_js_urls)
+                js_urls, non_js_urls, secrets = await recursive_process(initial_url, session, processed_urls, args.verbose, loop)
+                all_js_urls.update(js_urls)
+                all_non_js_urls.update(non_js_urls)
                 all_secrets.extend(secrets)
 
-    logger.info(f"Total URLs found: {len(all_urls)}")
+    logger.info(f"Total JS URLs found: {len(all_js_urls)}")
+    logger.info(f"Total non-JS URLs found: {len(all_non_js_urls)}")
     logger.info(f"Total secrets found: {len(all_secrets)}")
 
     if args.mode in ['endpoints', 'both']:
         logger.info("Printing endpoints")
-        for url in sorted(all_urls):
-            print(url)
+        for url in sorted(all_js_urls):
+            print(f"[JS] {url}")
+        for url in sorted(all_non_js_urls):
+            print(f"[Non-JS] {url}")
 
     if args.mode in ['secrets', 'both']:
         logger.info("Processing and printing secrets")
@@ -1093,7 +1074,8 @@ async def main():
             print(json.dumps(secret))
 
     logger.info(f"Total URLs processed: {len(processed_urls)}")
-    logger.info(f"Total unique non-JS URLs found: {len(all_urls)}")
+    logger.info(f"Total unique JS URLs found: {len(all_js_urls)}")
+    logger.info(f"Total unique non-JS URLs found: {len(all_non_js_urls)}")
     logger.info(f"Total secrets found: {len(all_secrets)}")
 
     logger.info("Main function completed")
