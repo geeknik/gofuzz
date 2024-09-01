@@ -56,7 +56,7 @@ async def fetch_url_content(url: str, session: aiohttp.ClientSession) -> str:
     logger.debug(f"Attempting to fetch content from {url}")
     try:
         async with semaphore:
-            async with session.get(url, timeout=30, headers={"User-Agent": USER_AGENT}) as response:
+            async with session.get(url, timeout=30, headers={"User-Agent": USER_AGENT}, ssl=False) as response:
                 if response.status != 200:
                     logger.debug(f"Failed to fetch {url}: HTTP {response.status}")
                     return ""
