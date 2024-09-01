@@ -526,6 +526,9 @@ async def main():
                         help="Enable verbose output")
     args = parser.parse_args()
 
+    print("Debug: Starting main function")
+    print(f"Debug: Mode: {args.mode}, Verbose: {args.verbose}")
+
     all_urls = set()
     all_secrets = []
     processed_urls = set()
@@ -535,19 +538,27 @@ async def main():
         for initial_url in sys.stdin:
             initial_url = initial_url.strip()
             if initial_url:
+                print(f"Debug: Processing URL: {initial_url}")
                 tasks.append(recursive_process(initial_url, session, processed_urls, args.verbose))
 
+        print(f"Debug: Total tasks created: {len(tasks)}")
         results = await asyncio.gather(*tasks)
+        print("Debug: All tasks completed")
 
         for js_urls, non_js_urls, secrets in results:
             all_urls.update(non_js_urls)
             all_secrets.extend(secrets)
 
+    print(f"Debug: Total URLs found: {len(all_urls)}")
+    print(f"Debug: Total secrets found: {len(all_secrets)}")
+
     if args.mode in ['endpoints', 'both']:
+        print("Debug: Printing endpoints")
         for url in sorted(all_urls):
             print(url)
 
     if args.mode in ['secrets', 'both']:
+        print("Debug: Processing and printing secrets")
         sorted_secrets = sorted(all_secrets, key=lambda x: (-severity_to_int(x['severity']), json.dumps(x)))
         unique_secrets = list(OrderedDict((json.dumps(secret), secret) for secret in sorted_secrets).values())
 
@@ -558,6 +569,8 @@ async def main():
         print(f"Total URLs processed: {len(processed_urls)}")
         print(f"Total unique non-JS URLs found: {len(all_urls)}")
         print(f"Total secrets found: {len(all_secrets)}")
+
+    print("Debug: Main function completed")
 
 if __name__ == "__main__":
     asyncio.run(main())
