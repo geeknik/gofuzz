@@ -1101,10 +1101,10 @@ async def main():
 
         for secret in unique_secrets:
             table_secrets.add_row(
-                secret['kind'],
-                secret['data'].get('value', 'N/A'),
-                secret['severity'],
-                secret.get('context', 'N/A')
+                str(secret['kind']),
+                str(secret['data'].get('value', 'N/A')),
+                str(secret['severity']),
+                str(secret.get('context', 'N/A'))
             )
         console.print(table_secrets)
 
