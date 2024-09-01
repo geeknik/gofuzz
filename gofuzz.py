@@ -10,6 +10,8 @@ import os
 import re
 import base64
 import ipaddress
+import requests
+from urllib.parse import urlparse
 
 def normalize_url(url, base_url):
     if url.startswith('//'):
@@ -117,12 +119,15 @@ def check_internal_ips(content, current_url):
         ip = match.group()
         try:
             if ipaddress.ip_address(ip).is_private:
+                poc = f"curl -I {current_url}"
                 secrets.append({
                     'kind': 'InternalIPAddress',
                     'data': {'value': ip, 'matched_string': match.group()},
                     'filename': current_url,
                     'severity': 'medium',
-                    'context': None
+                    'context': None,
+                    'poc': poc,
+                    'description': f"Internal IP address {ip} found in {current_url}. This may reveal information about the internal network structure."
                 })
         except ValueError:
             pass
@@ -135,12 +140,118 @@ def check_graphql_introspection(content, current_url):
         'types', 'inputFields', 'interfaces', 'enumValues', 'possibleTypes'
     ]
     if all(marker in content for marker in graphql_markers):
+        introspection_query = '''{
+  __schema {
+    queryType {
+      name
+    }
+    mutationType {
+      name
+    }
+    subscriptionType {
+      name
+    }
+    types {
+      ...FullType
+    }
+    directives {
+      name
+      description
+      locations
+      args {
+        ...InputValue
+      }
+    }
+  }
+}
+
+fragment FullType on __Type {
+  kind
+  name
+  description
+  fields(includeDeprecated: true) {
+    name
+    description
+    args {
+      ...InputValue
+    }
+    type {
+      ...TypeRef
+    }
+    isDeprecated
+    deprecationReason
+  }
+  inputFields {
+    ...InputValue
+  }
+  interfaces {
+    ...TypeRef
+  }
+  enumValues(includeDeprecated: true) {
+    name
+    description
+    isDeprecated
+    deprecationReason
+  }
+  possibleTypes {
+    ...TypeRef
+  }
+}
+
+fragment InputValue on __InputValue {
+  name
+  description
+  type {
+    ...TypeRef
+  }
+  defaultValue
+}
+
+fragment TypeRef on __Type {
+  kind
+  name
+  ofType {
+    kind
+    name
+    ofType {
+      kind
+      name
+      ofType {
+        kind
+        name
+        ofType {
+          kind
+          name
+          ofType {
+            kind
+            name
+            ofType {
+              kind
+              name
+              ofType {
+                kind
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}'''
+        poc = f'''
+curl -X POST {current_url} \\
+-H "Content-Type: application/json" \\
+-d '{{"query": "{introspection_query.replace('"', '\\"').replace("\n", "\\n")}"}}' 
+'''
         secrets.append({
             'kind': 'GraphQLIntrospection',
-            'data': {'value': 'Possible GraphQL Introspection detected', 'matched_string': '__schema'},
+            'data': {'value': 'GraphQL Introspection detected', 'matched_string': '__schema'},
             'filename': current_url,
             'severity': 'medium',
-            'context': None
+            'context': None,
+            'poc': poc,
+            'description': f"GraphQL introspection seems to be enabled on {current_url}. This could expose the entire API structure."
         })
     return secrets
 
@@ -149,12 +260,25 @@ def check_jwt_none_algorithm(content, current_url):
     jwt_none_regex = r'alg\s*:\s*["\']?none["\']?'
     jwt_none_matches = re.finditer(jwt_none_regex, content, re.IGNORECASE)
     for match in jwt_none_matches:
+        poc = f'''
+# Python script to generate a JWT token with 'none' algorithm
+import jwt
+
+payload = {{"user_id": 1, "username": "admin"}}
+token = jwt.encode(payload, None, algorithm="none")
+print(f"Generated token: {{token}}")
+
+# Use this token in a curl command
+curl -H "Authorization: Bearer {{token}}" {current_url}
+'''
         secrets.append({
             'kind': 'JWTNoneAlgorithm',
             'data': {'value': 'JWT None Algorithm detected', 'matched_string': match.group()},
             'filename': current_url,
             'severity': 'high',
-            'context': None
+            'context': None,
+            'poc': poc,
+            'description': f"JWT 'none' algorithm usage detected in {current_url}. This is a severe security vulnerability allowing token forgery."
         })
     return secrets
 
@@ -163,14 +287,30 @@ def check_cors_misconfig(content, current_url):
     cors_regex = r'Access-Control-Allow-Origin\s*:\s*\*'
     cors_matches = re.finditer(cors_regex, content, re.IGNORECASE)
     for match in cors_matches:
+        poc = f'''
+curl -H "Origin: https://attacker.com" -I {current_url}
+'''
         secrets.append({
             'kind': 'CORSMisconfiguration',
             'data': {'value': 'CORS Misconfiguration detected', 'matched_string': match.group()},
             'filename': current_url,
             'severity': 'medium',
-            'context': None
+            'context': None,
+            'poc': poc,
+            'description': f"Overly permissive CORS policy detected in {current_url}. This may allow unintended cross-origin requests."
         })
     return secrets
+
+def verify_cors_misconfig(url):
+    try:
+        headers = {'Origin': 'https://attacker.com'}
+        response = requests.options(url, headers=headers, timeout=5)
+        if 'Access-Control-Allow-Origin' in response.headers:
+            if response.headers['Access-Control-Allow-Origin'] == '*' or response.headers['Access-Control-Allow-Origin'] == 'https://attacker.com':
+                return True
+    except:
+        pass
+    return False
 
 def check_aws_cognito(content, current_url):
     secrets = []
