@@ -72,9 +72,20 @@ async def fetch_url_content(url: str, session: aiohttp.ClientSession) -> str:
         logger.exception(f"Unexpected error fetching {url}: {str(e)}")
     return ""
 
+# Cache to store fetched content
+url_content_cache = {}
+
 async def run_jsluice(url: str, mode: str, session: aiohttp.ClientSession, verbose: bool) -> tuple[list[str], str]:
     logger.debug(f"Running JSluice on {url} with mode {mode}")
-    content = await fetch_url_content(url, session)
+    
+    # Check if content is already in cache
+    if url in url_content_cache:
+        content = url_content_cache[url]
+    else:
+        content = await fetch_url_content(url, session)
+        if content:
+            url_content_cache[url] = content
+    
     if not content:
         logger.warning(f"No content fetched for {url}")
         return [], ""
