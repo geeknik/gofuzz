@@ -8,6 +8,7 @@ import aiohttp
 import tempfile
 import os
 import re
+import base64
 
 def normalize_url(url, base_url):
     if url.startswith('//'):
@@ -115,10 +116,10 @@ def check_aws_cognito(content, current_url):
         match = re.search(rf'{marker}\s*[=:]\s*["\']?([^"\']+)["\']?', content)
         if match:
             secrets.append({
-                'kind': 'AWSCognitoMisconfiguration',
+                'kind': 'AWSCognitoConfiguration',
                 'data': {'marker': marker, 'matched_string': match.group()},
                 'filename': current_url,
-                'severity': 'high',
+                'severity': 'info',
                 'context': None
             })
 
@@ -129,7 +130,7 @@ def check_aws_cognito(content, current_url):
             'kind': 'AWSCognitoPoolID',
             'data': {'value': match.group(), 'matched_string': match.group()},
             'filename': current_url,
-            'severity': 'high',
+            'severity': 'medium',
             'context': None
         })
 
@@ -141,11 +142,42 @@ def check_aws_cognito(content, current_url):
                 'kind': 'PossibleAWSCognitoPoolID',
                 'data': {'value': match.group(), 'matched_string': match.group()},
                 'filename': current_url,
-                'severity': 'medium',
+                'severity': 'low',
+                'context': None
+            })
+
+    # Check for potential Cognito tokens
+    token_regex = r'eyJraWQiOiJ[\w-]+\.[\w-]+\.[\w-]+'
+    token_matches = re.finditer(token_regex, content)
+    for match in token_matches:
+        token = match.group()
+        token_type = validate_cognito_token(token)
+        if token_type:
+            secrets.append({
+                'kind': f'AWSCognito{token_type}Token',
+                'data': {'value': token[:20] + '...', 'matched_string': match.group()},
+                'filename': current_url,
+                'severity': 'high' if token_type == 'Authenticated' else 'medium',
                 'context': None
             })
 
     return secrets
+
+def validate_cognito_token(token):
+    try:
+        # Decode the token without verification
+        header = json.loads(base64.urlsafe_b64decode(token.split('.')[0] + '=='))
+        payload = json.loads(base64.urlsafe_b64decode(token.split('.')[1] + '=='))
+
+        # Check if it's a Cognito token
+        if 'cognito:groups' in payload or 'token_use' in payload:
+            if 'cognito:username' in payload or payload.get('token_use') == 'access':
+                return 'Authenticated'
+            else:
+                return 'Anonymous'
+    except:
+        pass
+    return None
 
 def check_razorpay(content, current_url):
     secrets = []
