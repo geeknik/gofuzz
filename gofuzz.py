@@ -19,7 +19,7 @@ import datetime
 import requests
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Cache to store fetched content
 url_content_cache = {}
@@ -1063,9 +1063,6 @@ async def main():
                 all_non_js_urls.update(non_js_urls)
                 all_secrets.extend(secrets)
 
-    logger.info(f"Total JS URLs found: {len(all_js_urls)}")
-    logger.info(f"Total non-JS URLs found: {len(all_non_js_urls)}")
-    logger.info(f"Total secrets found: {len(all_secrets)}")
 
     if args.mode in ['endpoints', 'both']:
         logger.info("Printing endpoints")
@@ -1082,12 +1079,6 @@ async def main():
         for secret in unique_secrets:
             print(json.dumps(secret))
 
-    logger.info(f"Total URLs processed: {len(processed_urls)}")
-    logger.info(f"Total unique JS URLs found: {len(all_js_urls)}")
-    logger.info(f"Total unique non-JS URLs found: {len(all_non_js_urls)}")
-    logger.info(f"Total secrets found: {len(all_secrets)}")
-
-    logger.info("Main function completed")
 
 if __name__ == "__main__":
     asyncio.run(main())
